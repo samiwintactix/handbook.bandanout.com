@@ -1,0 +1,14 @@
+{
+  "_comment": "Optional. Copy this file to data/roster.json and fill in real names/roles to override how people appear on the dashboard. Key by the person's Jira display name (exactly as it appears in Jira) or their Jira accountId. Add `slackId` (their Slack member ID, e.g. from their Slack profile > More > Copy member ID) so Slack-sourced signals attach to the same person instead of creating a separate entry.",
+  "Sami Khan": {
+    "role": "CRM",
+    "capacity": "Committed capacity",
+    "color": "c2",
+    "slackId": "U01ABCDE23"
+  },
+  "Muhammad Aarib": {
+    "role": "CRM — Attio & Twenty",
+    "capacity": "Flexible capacity",
+    "color": "c5"
+  }
+}
