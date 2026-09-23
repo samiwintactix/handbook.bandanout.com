@@ -19,6 +19,8 @@ const CONFLUENCE_SPACE_KEY = process.env.CONFLUENCE_SPACE_KEY || 'CHE';
 const ATLASSIAN_EMAIL = process.env.ATLASSIAN_EMAIL;
 const ATLASSIAN_API_TOKEN = process.env.ATLASSIAN_API_TOKEN;
 const SLACK_SIGNAL_TOKEN = process.env.SLACK_SIGNAL_TOKEN;
+const DASHBOARD_USERNAME = process.env.DASHBOARD_USERNAME || 'bandanout';
+const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD;
 
 const FLAG_MARKER = '\u200B\u200C\u200B';
 
@@ -27,6 +29,9 @@ if (!ATLASSIAN_EMAIL || !ATLASSIAN_API_TOKEN) {
 }
 if (!SLACK_SIGNAL_TOKEN) {
   console.warn('Warning: SLACK_SIGNAL_TOKEN is not set. POST /api/signals/slack will reject all requests until it is.');
+}
+if (!DASHBOARD_PASSWORD) {
+  console.warn('Warning: DASHBOARD_PASSWORD is not set. The dashboard is open to anyone with the URL.');
 }
 
 function authHeader() {
@@ -343,6 +348,30 @@ function isHidden(personId, personName, roster) {
 
 const app = express();
 app.use(express.json());
+
+// Password-gates the whole dashboard (UI + API) behind the browser's native
+// Basic Auth prompt. /healthz stays open for uptime checks, and
+// /api/signals/slack has its own separate token auth for the Forge app's
+// server-to-server calls — Basic Auth doesn't apply to either.
+app.use((req, res, next) => {
+  if (req.path === '/healthz' || req.path === '/api/signals/slack') return next();
+  if (!DASHBOARD_PASSWORD) return next();
+
+  const [scheme, encoded] = (req.headers.authorization || '').split(' ');
+  if (scheme === 'Basic' && encoded) {
+    const decoded = Buffer.from(encoded, 'base64').toString('utf-8');
+    const sep = decoded.indexOf(':');
+    const user = sep === -1 ? decoded : decoded.slice(0, sep);
+    const pass = sep === -1 ? '' : decoded.slice(sep + 1);
+    if (safeTokenMatch(user, DASHBOARD_USERNAME) && safeTokenMatch(pass, DASHBOARD_PASSWORD)) {
+      return next();
+    }
+  }
+
+  res.set('WWW-Authenticate', 'Basic realm="Bandanout Dashboard"');
+  res.status(401).send('Authentication required');
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/data', async (req, res) => {
