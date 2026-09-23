@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="Track and aggregate handbook expectation feedback across Jira, Slack, and manual observations." />
-  <title>Bandanout — Expectations dashboard</title>
+  <title>Bandanaut — Expectations dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
@@ -351,7 +351,7 @@ h3 { margin-bottom: 0; font: 700 1rem/1.35 "Manrope", sans-serif; letter-spacing
     <aside class="sidebar" aria-label="Primary navigation">
       <div class="brand" aria-label="Expectations home">
         <span class="brand-mark"><span></span><span></span><span></span></span>
-        <span class="brand-name">Bandanout</span>
+        <span class="brand-name">Bandanaut</span>
       </div>
 
       <nav class="nav-list">
@@ -380,12 +380,12 @@ h3 { margin-bottom: 0; font: 700 1rem/1.35 "Manrope", sans-serif; letter-spacing
           <span>Settings</span>
         </button>
         <div class="profile">
-          <div class="avatar avatar-owner">BL</div>
+          <div class="avatar avatar-owner" id="currentUserAvatar">?</div>
           <div>
-            <strong>Bertrams</strong>
-            <span>Workspace owner</span>
+            <strong id="currentUserName">Signed in</strong>
+            <span id="currentUserEmail"></span>
           </div>
-          <button class="icon-button subtle" aria-label="Profile options">
+          <button class="icon-button subtle" id="signOutButton" aria-label="Sign out" title="Sign out">
             <svg aria-hidden="true"><use href="#icon-more"></use></svg>
           </button>
         </div>
@@ -915,6 +915,7 @@ $("#expectationsSearch").addEventListener("input", renderExpectations);
 $("#activitySearch").addEventListener("input", renderActivity);
 $("#exportButton").addEventListener("click", exportCsv);
 $("#settingsButton").addEventListener("click", () => showToast("Integration settings would live here"));
+$("#signOutButton").addEventListener("click", () => { window.location.href = "/auth/logout"; });
 $("#filterButton").addEventListener("click", () => showToast("Showing current team members only"));
 
 $$('[data-period]').forEach(button => button.addEventListener("click", () => {
@@ -977,6 +978,11 @@ async function bootstrap() {
     expectations = data.expectations || [];
     signals = data.signals || [];
     selectedPersonId = team[0] ? team[0].id : null;
+    if (data.currentUser) {
+      $("#currentUserAvatar").textContent = data.currentUser.initials || "?";
+      $("#currentUserName").textContent = data.currentUser.name || data.currentUser.email || "Signed in";
+      $("#currentUserEmail").textContent = data.currentUser.email || "";
+    }
     initializeForm();
     renderAll();
   } catch (err) {

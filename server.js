@@ -443,7 +443,7 @@ const LOGIN_PAGE_HTML = `<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Bandanout — Sign in</title>
+<title>Bandanaut — Sign in</title>
 <style>
   body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f8fafc; }
   .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 40px rgba(15,23,42,0.08); padding: 40px; width: 320px; text-align: center; }
@@ -458,7 +458,7 @@ const LOGIN_PAGE_HTML = `<!doctype html>
 <body>
   <div class="card">
     <div class="logo"></div>
-    <h1>Bandanout</h1>
+    <h1>Bandanaut</h1>
     <p>Sign in with your Atlassian account to view expectation signals.</p>
     {{ERROR}}
     <a class="btn" href="/auth/login">Sign in with Atlassian</a>
@@ -599,7 +599,14 @@ app.get('/api/data', async (req, res) => {
 
     const signals = [...jiraSignalsWithStatus, ...manualSignals, ...slackSignals];
 
-    res.json({ team, expectations, signals });
+    res.json({
+      team,
+      expectations,
+      signals,
+      currentUser: req.user
+        ? { name: req.user.name, email: req.user.email, initials: initials(req.user.name || req.user.email) }
+        : null
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
@@ -650,7 +657,7 @@ app.post('/api/signals', async (req, res) => {
                   { type: 'text', text: title, marks: [{ type: 'strong' }] },
                   { type: 'text', text: '. ' },
                   { type: 'text', text: 'Have a read of it again over here', marks: [{ type: 'link', attrs: { href: link } }] },
-                  { type: 'text', text: '. Flagged via the Bandanout dashboard.' }
+                  { type: 'text', text: '. Flagged via the Bandanaut dashboard.' }
                 ]
               }
             ]
