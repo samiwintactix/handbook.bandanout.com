@@ -221,9 +221,21 @@ async function fetchJiraSignals(expectations) {
       const first = readParagraphMentionsAndText(paragraphs[0]);
       if (!first.text.includes(FLAG_MARKER)) continue;
 
-      const assigneeId = first.mentionIds[0] || null;
-      const flaggerId = first.mentionIds[1] || null;
-      const expectationTitle = first.boldText;
+      // Two known comment shapes, both starting with the flag marker:
+      //  - single paragraph: "Hey @assignee! ... **title** ... Flagged by @flagger"
+      //    (mentions in order [assignee, flagger], bold title in the same paragraph)
+      //  - two paragraphs: para 1 "Flagged by @flagger for @assignee" (mentions
+      //    REVERSED: [flagger, assignee]), para 2 "...may not have followed: **title**"
+      let assigneeId, flaggerId, expectationTitle;
+      if (first.boldText) {
+        assigneeId = first.mentionIds[0] || null;
+        flaggerId = first.mentionIds[1] || null;
+        expectationTitle = first.boldText;
+      } else {
+        flaggerId = first.mentionIds[0] || null;
+        assigneeId = first.mentionIds[1] || null;
+        expectationTitle = readParagraphMentionsAndText(paragraphs[1]).boldText;
+      }
 
       const [assigneeName, flaggerName] = await Promise.all([
         getDisplayName(assigneeId),
