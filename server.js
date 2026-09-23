@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import fssync from 'fs';
 import crypto from 'crypto';
+import { Redis } from '@upstash/redis';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -42,23 +43,45 @@ function safeTokenMatch(provided, expected) {
   return crypto.timingSafeEqual(a, b);
 }
 
-// ---------- Local persistence (manual signals + discussed overrides) ----------
+// ---------- Persistence (manual signals + Slack signals + discussed overrides) ----------
+//
+// Vercel's filesystem is read-only/ephemeral in production, so a plain JSON
+// file can't survive there — when a Redis integration is connected (its env
+// vars are present), that's used instead. Local dev with no Redis set up
+// keeps using the local JSON file, so `npm start` still works unchanged.
+// Supports both the legacy Vercel KV env var names and native Upstash ones,
+// since either may be what a "Connect Store" integration injects.
 
 const DATA_DIR = path.join(__dirname, 'data');
 const STORE_PATH = path.join(DATA_DIR, 'store.json');
+const STORE_KV_KEY = 'bandanout:store';
+const EMPTY_STORE = { manualSignals: [], slackSignals: [], discussedIds: [] };
 
-function loadStore() {
+const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+const REDIS_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+const useKv = !!(REDIS_URL && REDIS_TOKEN);
+const redis = useKv ? new Redis({ url: REDIS_URL, token: REDIS_TOKEN }) : null;
+
+async function loadStore() {
+  if (useKv) {
+    const data = await redis.get(STORE_KV_KEY);
+    return data || { ...EMPTY_STORE };
+  }
   if (!fssync.existsSync(STORE_PATH)) {
-    return { manualSignals: [], discussedIds: [] };
+    return { ...EMPTY_STORE };
   }
   try {
     return JSON.parse(fssync.readFileSync(STORE_PATH, 'utf-8'));
   } catch {
-    return { manualSignals: [], discussedIds: [] };
+    return { ...EMPTY_STORE };
   }
 }
 
 async function saveStore(store) {
+  if (useKv) {
+    await redis.set(STORE_KV_KEY, store);
+    return;
+  }
   await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(STORE_PATH, JSON.stringify(store, null, 2), 'utf-8');
 }
@@ -303,7 +326,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/data', async (req, res) => {
   try {
-    const store = loadStore();
+    const store = await loadStore();
     const roster = loadRosterOverrides();
 
     const expectations = await fetchExpectations();
@@ -355,7 +378,7 @@ app.get('/api/data', async (req, res) => {
 app.post('/api/signals', async (req, res) => {
   try {
     const { personId, expectationId, source, reference, note, notify } = req.body;
-    const store = loadStore();
+    const store = await loadStore();
 
     const id = `manual-${Date.now()}`;
     const signal = {
@@ -429,7 +452,7 @@ app.post('/api/signals', async (req, res) => {
 app.post('/api/signals/discuss', async (req, res) => {
   try {
     const { ids } = req.body;
-    const store = loadStore();
+    const store = await loadStore();
     store.discussedIds = [...new Set([...(store.discussedIds || []), ...(ids || [])])];
     await saveStore(store);
     res.json({ ok: true });
@@ -455,7 +478,7 @@ app.post('/api/signals/slack', async (req, res) => {
       return res.status(400).json({ error: 'channel, ts, slackUserId, and expectationTitle are required' });
     }
 
-    const store = loadStore();
+    const store = await loadStore();
     store.slackSignals = store.slackSignals || [];
 
     // Deterministic id so Slack's at-least-once delivery (retries) can't double-log
@@ -491,6 +514,12 @@ app.post('/api/signals/slack', async (req, res) => {
 
 app.get('/healthz', (req, res) => res.send('ok'));
 
-app.listen(PORT, () => {
-  console.log(`Bandanout dashboard running on http://localhost:${PORT}`);
-});
+// Vercel imports `app` directly as a request handler (see api/index.js) instead
+// of running this file, so only listen when started directly (`npm start`).
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Bandanout dashboard running on http://localhost:${PORT}`);
+  });
+}
+
+export default app;

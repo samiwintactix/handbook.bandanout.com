@@ -37,9 +37,18 @@ Open http://localhost:3000 — you should see the real dashboard with live data.
 
 I can't deploy this to your domain directly — that needs your hosting account and DNS access. Here's the fastest path:
 
-### Step A — Host the app (pick one, both have free tiers)
+### Step A — Host the app (pick one)
 
-**Render.com** (simplest for this kind of app)
+**Vercel** (if you're already deploying there — needs one extra step, see below)
+1. Import the GitHub repo as a new Vercel project (framework preset: Other).
+2. Add the environment variables from `.env` in Vercel's dashboard (Settings → Environment Variables).
+3. This app persists manual/Slack signals to a local JSON file, which does **not** survive on Vercel's serverless filesystem — you need a Redis store for that data to stick:
+   - In the Vercel project: **Storage → Create Database** (or **Connect Store**) → pick a Redis option from Marketplace (Upstash).
+   - Connecting it auto-injects `KV_REST_API_URL`/`KV_REST_API_TOKEN` (or `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`) into the project's env vars — `server.js` picks either naming up automatically, no code changes needed.
+4. Redeploy. `vercel.json` + `api/index.js` in this repo route all requests through the Express app (`server.js`), including the frontend — no separate static-site config needed.
+5. Sanity check after deploying: `curl https://your-domain/healthz` should return `ok`. If it 404s, the backend isn't actually running (check the Vercel deployment's function logs).
+
+**Render.com** (simplest — persistent server + writable disk, no extra storage setup)
 1. Push this folder to a GitHub repo (or use Render's "deploy from folder" if available)
 2. On Render: **New → Web Service**, connect the repo
 3. Build command: `npm install`
@@ -47,7 +56,7 @@ I can't deploy this to your domain directly — that needs your hosting account 
 5. Add the environment variables from `.env` in Render's dashboard (Settings → Environment)
 6. Deploy — Render gives you a URL like `bandanout-dashboard.onrender.com`
 
-**Railway.app** (similar flow)
+**Railway.app** (similar flow to Render)
 1. New Project → Deploy from GitHub repo
 2. Add the same environment variables
 3. Railway gives you a public URL automatically
