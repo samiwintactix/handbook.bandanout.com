@@ -330,6 +330,15 @@ function buildTeam(peopleFromJira, roster) {
   });
 }
 
+// Jira hides email addresses for most accounts on this site, so an actual
+// email-domain filter isn't possible via the API. Instead, data/roster.json
+// entries can set `hidden: true` to exclude a specific person (e.g. a test
+// account) from the dashboard — everyone else shows by default.
+function isHidden(personId, personName, roster) {
+  const override = roster[personId] || roster[personName];
+  return !!override?.hidden;
+}
+
 // ---------- API ----------
 
 const app = express();
@@ -344,24 +353,31 @@ app.get('/api/data', async (req, res) => {
     const expectations = await fetchExpectations();
     const { signals: jiraSignals, people } = await fetchJiraSignals(expectations);
 
-    const team = buildTeam(people, roster);
+    const visiblePeople = people.filter((p) => !isHidden(p.id, p.name, roster));
+    const team = buildTeam(visiblePeople, roster);
 
     const discussedSet = new Set(store.discussedIds || []);
-    const jiraSignalsWithStatus = jiraSignals.map((s) => ({
-      ...s,
-      status: discussedSet.has(s.id) ? 'discussed' : 'open'
-    }));
+    const jiraSignalsWithStatus = jiraSignals
+      .filter((s) => team.some((t) => t.id === s.personId))
+      .map((s) => ({
+        ...s,
+        status: discussedSet.has(s.id) ? 'discussed' : 'open'
+      }));
 
-    const manualSignals = (store.manualSignals || []).map((s) => ({
-      ...s,
-      status: discussedSet.has(s.id) ? 'discussed' : s.status
-    }));
+    const manualSignals = (store.manualSignals || [])
+      .filter((s) => !isHidden(s.personId, s.personName, roster))
+      .map((s) => ({
+        ...s,
+        status: discussedSet.has(s.id) ? 'discussed' : s.status
+      }));
 
-    const slackSignals = (store.slackSignals || []).map((s) => ({
-      ...s,
-      expectationId: resolveExpectationByTitle(expectations, s.expectationTitle),
-      status: discussedSet.has(s.id) ? 'discussed' : s.status
-    }));
+    const slackSignals = (store.slackSignals || [])
+      .filter((s) => !isHidden(s.personId, s.personName, roster))
+      .map((s) => ({
+        ...s,
+        expectationId: resolveExpectationByTitle(expectations, s.expectationTitle),
+        status: discussedSet.has(s.id) ? 'discussed' : s.status
+      }));
 
     // Make sure every manual/slack signal's person exists in team (fallback entry)
     [...manualSignals, ...slackSignals].forEach((s) => {

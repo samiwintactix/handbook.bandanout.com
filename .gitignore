@@ -1,7 +1,6 @@
 node_modules/
 .env
 data/store.json
-data/roster.json
 
 .vercel
 .env*
