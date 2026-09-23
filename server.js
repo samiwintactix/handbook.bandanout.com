@@ -19,8 +19,13 @@ const CONFLUENCE_SPACE_KEY = process.env.CONFLUENCE_SPACE_KEY || 'CHE';
 const ATLASSIAN_EMAIL = process.env.ATLASSIAN_EMAIL;
 const ATLASSIAN_API_TOKEN = process.env.ATLASSIAN_API_TOKEN;
 const SLACK_SIGNAL_TOKEN = process.env.SLACK_SIGNAL_TOKEN;
-const DASHBOARD_USERNAME = process.env.DASHBOARD_USERNAME || 'bandanout';
-const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD;
+
+// "Sign in with Atlassian" \u2014 a separate OAuth 2.0 (3LO) app registered just
+// for login, distinct from the API token used to read Jira/Confluence data.
+const ATLASSIAN_OAUTH_CLIENT_ID = process.env.ATLASSIAN_OAUTH_CLIENT_ID;
+const ATLASSIAN_OAUTH_CLIENT_SECRET = process.env.ATLASSIAN_OAUTH_CLIENT_SECRET;
+const OAUTH_REDIRECT_URI = process.env.OAUTH_REDIRECT_URI || 'https://handbook.bandanaut.com/auth/callback';
+const ALLOWED_EMAIL_DOMAIN = (process.env.ALLOWED_EMAIL_DOMAIN || 'wintactix.com').toLowerCase();
 
 const FLAG_MARKER = '\u200B\u200C\u200B';
 
@@ -30,8 +35,8 @@ if (!ATLASSIAN_EMAIL || !ATLASSIAN_API_TOKEN) {
 if (!SLACK_SIGNAL_TOKEN) {
   console.warn('Warning: SLACK_SIGNAL_TOKEN is not set. POST /api/signals/slack will reject all requests until it is.');
 }
-if (!DASHBOARD_PASSWORD) {
-  console.warn('Warning: DASHBOARD_PASSWORD is not set. The dashboard is open to anyone with the URL.');
+if (!ATLASSIAN_OAUTH_CLIENT_ID || !ATLASSIAN_OAUTH_CLIENT_SECRET) {
+  console.warn('Warning: ATLASSIAN_OAUTH_CLIENT_ID / ATLASSIAN_OAUTH_CLIENT_SECRET are not set. Sign-in is disabled and the dashboard is open to anyone with the URL.');
 }
 
 function authHeader() {
@@ -89,6 +94,64 @@ async function saveStore(store) {
   }
   await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(STORE_PATH, JSON.stringify(store, null, 2), 'utf-8');
+}
+
+// ---------- Sessions (Sign in with Atlassian) ----------
+//
+// Same Redis-or-local pattern as the store above: Redis when configured,
+// otherwise an in-memory Map — fine for local dev since sessions don't need
+// to survive a restart there.
+
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
+const memorySessions = new Map();
+
+async function createSession(user) {
+  const id = crypto.randomBytes(32).toString('hex');
+  const session = { ...user, createdAt: Date.now() };
+  if (useKv) {
+    await redis.set(`session:${id}`, session, { ex: SESSION_TTL_SECONDS });
+  } else {
+    memorySessions.set(id, session);
+  }
+  return id;
+}
+
+async function getSession(id) {
+  if (!id) return null;
+  if (useKv) return (await redis.get(`session:${id}`)) || null;
+  return memorySessions.get(id) || null;
+}
+
+async function destroySession(id) {
+  if (!id) return;
+  if (useKv) {
+    await redis.del(`session:${id}`);
+  } else {
+    memorySessions.delete(id);
+  }
+}
+
+function parseCookies(req) {
+  const header = req.headers.cookie || '';
+  const cookies = {};
+  header.split(';').forEach((pair) => {
+    const idx = pair.indexOf('=');
+    if (idx === -1) return;
+    const key = pair.slice(0, idx).trim();
+    if (key) cookies[key] = decodeURIComponent(pair.slice(idx + 1).trim());
+  });
+  return cookies;
+}
+
+function setCookie(res, name, value, { maxAgeSeconds } = {}) {
+  const parts = [`${name}=${encodeURIComponent(value)}`, 'Path=/', 'HttpOnly', 'SameSite=Lax'];
+  if (process.env.VERCEL) parts.push('Secure');
+  if (maxAgeSeconds != null) parts.push(`Max-Age=${maxAgeSeconds}`);
+  res.append('Set-Cookie', parts.join('; '));
+}
+
+function clearCookie(res, name) {
+  res.append('Set-Cookie', `${name}=; Path=/; Max-Age=0`);
 }
 
 // ---------- Confluence: expectations ----------
@@ -349,27 +412,138 @@ function isHidden(personId, personName, roster) {
 const app = express();
 app.use(express.json());
 
-// Password-gates the whole dashboard (UI + API) behind the browser's native
-// Basic Auth prompt. /healthz stays open for uptime checks, and
-// /api/signals/slack has its own separate token auth for the Forge app's
-// server-to-server calls — Basic Auth doesn't apply to either.
-app.use((req, res, next) => {
-  if (req.path === '/healthz' || req.path === '/api/signals/slack') return next();
-  if (!DASHBOARD_PASSWORD) return next();
+// Gates the whole dashboard (UI + API) behind a signed-in session. /healthz
+// stays open for uptime checks, /api/signals/slack keeps its own separate
+// token auth for the Forge app's server-to-server calls, and /auth/* + /login
+// have to stay reachable to unauthenticated visitors so they can sign in.
+app.use(async (req, res, next) => {
+  if (
+    req.path === '/healthz' ||
+    req.path === '/api/signals/slack' ||
+    req.path === '/login' ||
+    req.path.startsWith('/auth/')
+  ) return next();
+  if (!ATLASSIAN_OAUTH_CLIENT_ID) return next(); // sign-in not configured — open, dev convenience
 
-  const [scheme, encoded] = (req.headers.authorization || '').split(' ');
-  if (scheme === 'Basic' && encoded) {
-    const decoded = Buffer.from(encoded, 'base64').toString('utf-8');
-    const sep = decoded.indexOf(':');
-    const user = sep === -1 ? decoded : decoded.slice(0, sep);
-    const pass = sep === -1 ? '' : decoded.slice(sep + 1);
-    if (safeTokenMatch(user, DASHBOARD_USERNAME) && safeTokenMatch(pass, DASHBOARD_PASSWORD)) {
-      return next();
-    }
+  const { bandanout_session: sessionId } = parseCookies(req);
+  const session = await getSession(sessionId);
+  if (session) {
+    req.user = session;
+    return next();
   }
 
-  res.set('WWW-Authenticate', 'Basic realm="Bandanout Dashboard"');
-  res.status(401).send('Authentication required');
+  if (req.path.startsWith('/api/')) {
+    return res.status(401).json({ error: 'Not signed in' });
+  }
+  return res.redirect('/login');
+});
+
+const LOGIN_PAGE_HTML = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bandanout — Sign in</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f8fafc; }
+  .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 40px rgba(15,23,42,0.08); padding: 40px; width: 320px; text-align: center; }
+  .logo { width: 40px; height: 40px; border-radius: 10px; background: #6366f1; margin: 0 auto 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; color: #0f172a; }
+  p { color: #64748b; font-size: 14px; margin: 0 0 24px; }
+  a.btn { display: block; box-sizing: border-box; padding: 12px 16px; background: #6366f1; color: #fff; border-radius: 10px; text-decoration: none; font-weight: 600; font-size: 14px; }
+  a.btn:hover { background: #4f46e5; }
+  .error { color: #dc2626; font-size: 13px; margin: -12px 0 20px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo"></div>
+    <h1>Bandanout</h1>
+    <p>Sign in with your Atlassian account to view expectation signals.</p>
+    {{ERROR}}
+    <a class="btn" href="/auth/login">Sign in with Atlassian</a>
+  </div>
+</body>
+</html>`;
+
+app.get('/login', (req, res) => {
+  const error = req.query.error === 'domain'
+    ? `<p class="error">That account isn't part of ${ALLOWED_EMAIL_DOMAIN} — access denied.</p>`
+    : req.query.error === 'failed'
+      ? '<p class="error">Sign-in failed. Please try again.</p>'
+      : '';
+  res.type('html').send(LOGIN_PAGE_HTML.replace('{{ERROR}}', error));
+});
+
+app.get('/auth/login', (req, res) => {
+  if (!ATLASSIAN_OAUTH_CLIENT_ID) return res.status(503).send('Sign-in is not configured.');
+  const state = crypto.randomBytes(16).toString('hex');
+  setCookie(res, 'oauth_state', state, { maxAgeSeconds: 600 });
+  const params = new URLSearchParams({
+    audience: 'api.atlassian.com',
+    client_id: ATLASSIAN_OAUTH_CLIENT_ID,
+    scope: 'read:me',
+    redirect_uri: OAUTH_REDIRECT_URI,
+    state,
+    response_type: 'code',
+    prompt: 'consent'
+  });
+  res.redirect(`https://auth.atlassian.com/authorize?${params.toString()}`);
+});
+
+app.get('/auth/callback', async (req, res) => {
+  try {
+    const { code, state } = req.query;
+    const cookies = parseCookies(req);
+    clearCookie(res, 'oauth_state');
+    if (!code || !state || state !== cookies.oauth_state) {
+      return res.redirect('/login?error=failed');
+    }
+
+    const tokenRes = await fetch('https://auth.atlassian.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'authorization_code',
+        client_id: ATLASSIAN_OAUTH_CLIENT_ID,
+        client_secret: ATLASSIAN_OAUTH_CLIENT_SECRET,
+        code,
+        redirect_uri: OAUTH_REDIRECT_URI
+      })
+    });
+    if (!tokenRes.ok) throw new Error(`Token exchange failed: ${tokenRes.status}`);
+    const { access_token } = await tokenRes.json();
+
+    const meRes = await fetch('https://api.atlassian.com/me', {
+      headers: { Authorization: `Bearer ${access_token}` }
+    });
+    if (!meRes.ok) throw new Error(`Identity fetch failed: ${meRes.status}`);
+    const me = await meRes.json();
+
+    const email = (me.email || '').toLowerCase();
+    if (!email.endsWith(`@${ALLOWED_EMAIL_DOMAIN}`)) {
+      return res.redirect('/login?error=domain');
+    }
+
+    const sessionId = await createSession({
+      accountId: me.account_id,
+      email,
+      name: me.name,
+      picture: me.picture
+    });
+    setCookie(res, 'bandanout_session', sessionId, { maxAgeSeconds: SESSION_TTL_SECONDS });
+    res.redirect('/');
+  } catch (err) {
+    console.error('OAuth callback error:', err);
+    res.redirect('/login?error=failed');
+  }
+});
+
+app.get('/auth/logout', async (req, res) => {
+  const { bandanout_session: sessionId } = parseCookies(req);
+  await destroySession(sessionId);
+  clearCookie(res, 'bandanout_session');
+  res.redirect('/login');
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
