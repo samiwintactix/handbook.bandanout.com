@@ -53,6 +53,26 @@ function safeTokenMatch(provided, expected) {
   return crypto.timingSafeEqual(a, b);
 }
 
+// scrypt, not a plain hash — deliberately slow to brute-force. This is a
+// dashboard-only password (see the user store below), never the person's
+// real Atlassian password, which we never see or store.
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  if (!password || !stored) return false;
+  const [salt, hash] = stored.split(':');
+  if (!salt || !hash) return false;
+  const derived = crypto.scryptSync(password, salt, 64).toString('hex');
+  const a = Buffer.from(hash, 'hex');
+  const b = Buffer.from(derived, 'hex');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 // ---------- Persistence (manual signals + Slack signals + discussed overrides) ----------
 //
 // Vercel's filesystem is read-only/ephemeral in production, so a plain JSON
@@ -152,6 +172,30 @@ function setCookie(res, name, value, { maxAgeSeconds } = {}) {
 
 function clearCookie(res, name) {
   res.append('Set-Cookie', `${name}=; Path=/; Max-Age=0`);
+}
+
+// ---------- User records (dashboard-only password, set after first sign-in) ----------
+//
+// Separate from sessions: this is per-person data that should persist
+// indefinitely, not expire like a session does. Keyed by email since that's
+// what a returning user types on the password login form.
+
+const memoryUsers = new Map();
+
+async function getUserRecord(email) {
+  if (!email) return null;
+  const key = `user:${email.toLowerCase()}`;
+  if (useKv) return (await redis.get(key)) || null;
+  return memoryUsers.get(key) || null;
+}
+
+async function saveUserRecord(email, data) {
+  const key = `user:${email.toLowerCase()}`;
+  if (useKv) {
+    await redis.set(key, data);
+    return;
+  }
+  memoryUsers.set(key, data);
 }
 
 // ---------- Confluence: expectations ----------
@@ -411,26 +455,25 @@ function isHidden(personId, personName, roster) {
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: false })); // for the plain HTML password forms
 
 // Gates the whole dashboard (UI + API) behind a signed-in session. /healthz
 // stays open for uptime checks, /api/signals/slack keeps its own separate
-// token auth for the Forge app's server-to-server calls, and /auth/* + /login
-// have to stay reachable to unauthenticated visitors so they can sign in.
+// token auth for the Forge app's server-to-server calls, and the public auth
+// entry points have to stay reachable to signed-out visitors. Note
+// /auth/set-password is deliberately NOT public — it needs req.user.
+const PUBLIC_PATHS = new Set([
+  '/healthz', '/api/signals/slack', '/login',
+  '/auth/login', '/auth/callback', '/auth/logout', '/auth/login-password'
+]);
 app.use(async (req, res, next) => {
-  if (
-    req.path === '/healthz' ||
-    req.path === '/api/signals/slack' ||
-    req.path === '/login' ||
-    req.path.startsWith('/auth/')
-  ) return next();
-  if (!ATLASSIAN_OAUTH_CLIENT_ID) return next(); // sign-in not configured — open, dev convenience
-
   const { bandanout_session: sessionId } = parseCookies(req);
   const session = await getSession(sessionId);
-  if (session) {
-    req.user = session;
-    return next();
-  }
+  if (session) req.user = session;
+
+  if (PUBLIC_PATHS.has(req.path)) return next();
+  if (!ATLASSIAN_OAUTH_CLIENT_ID) return next(); // sign-in not configured — open, dev convenience
+  if (req.user) return next();
 
   if (req.path.startsWith('/api/')) {
     return res.status(401).json({ error: 'Not signed in' });
@@ -450,9 +493,14 @@ const LOGIN_PAGE_HTML = `<!doctype html>
   .logo { width: 40px; height: 40px; border-radius: 10px; background: #6366f1; margin: 0 auto 16px; }
   h1 { font-size: 20px; margin: 0 0 4px; color: #0f172a; }
   p { color: #64748b; font-size: 14px; margin: 0 0 24px; }
-  a.btn { display: block; box-sizing: border-box; padding: 12px 16px; background: #6366f1; color: #fff; border-radius: 10px; text-decoration: none; font-weight: 600; font-size: 14px; }
-  a.btn:hover { background: #4f46e5; }
+  a.btn, button.btn { display: block; width: 100%; box-sizing: border-box; padding: 12px 16px; background: #6366f1; color: #fff; border: 0; border-radius: 10px; text-decoration: none; font-weight: 600; font-size: 14px; cursor: pointer; }
+  a.btn:hover, button.btn:hover { background: #4f46e5; }
   .error { color: #dc2626; font-size: 13px; margin: -12px 0 20px; }
+  .divider { display: flex; align-items: center; gap: 10px; margin: 22px 0; color: #94a3b8; font-size: 12px; }
+  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: #e2e8f0; }
+  form { text-align: left; }
+  label { display: block; font-size: 12px; font-weight: 600; color: #334155; margin-bottom: 6px; }
+  input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; margin-bottom: 14px; }
 </style>
 </head>
 <body>
@@ -462,6 +510,14 @@ const LOGIN_PAGE_HTML = `<!doctype html>
     <p>Sign in with your Atlassian account to view expectation signals.</p>
     {{ERROR}}
     <a class="btn" href="/auth/login">Sign in with Atlassian</a>
+    <div class="divider">or</div>
+    <form method="POST" action="/auth/login-password">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" required autocomplete="username" />
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required autocomplete="current-password" />
+      <button class="btn" type="submit">Sign in with password</button>
+    </form>
   </div>
 </body>
 </html>`;
@@ -471,7 +527,9 @@ app.get('/login', (req, res) => {
     ? `<p class="error">That account isn't part of ${ALLOWED_EMAIL_DOMAIN} — access denied.</p>`
     : req.query.error === 'failed'
       ? '<p class="error">Sign-in failed. Please try again.</p>'
-      : '';
+      : req.query.error === 'badcreds'
+        ? '<p class="error">Incorrect email or password.</p>'
+        : '';
   res.type('html').send(LOGIN_PAGE_HTML.replace('{{ERROR}}', error));
 });
 
@@ -532,7 +590,10 @@ app.get('/auth/callback', async (req, res) => {
       picture: me.picture
     });
     setCookie(res, 'bandanout_session', sessionId, { maxAgeSeconds: SESSION_TTL_SECONDS });
-    res.redirect('/');
+
+    const existingUser = await getUserRecord(email);
+    await saveUserRecord(email, { ...existingUser, accountId: me.account_id, email, name: me.name });
+    res.redirect(existingUser?.passwordHash ? '/' : '/auth/set-password');
   } catch (err) {
     console.error('OAuth callback error:', err);
     res.redirect('/login?error=failed');
@@ -544,6 +605,73 @@ app.get('/auth/logout', async (req, res) => {
   await destroySession(sessionId);
   clearCookie(res, 'bandanout_session');
   res.redirect('/login');
+});
+
+const SET_PASSWORD_PAGE_HTML = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bandanaut — Create a password</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f8fafc; }
+  .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 40px rgba(15,23,42,0.08); padding: 40px; width: 320px; }
+  h1 { font-size: 18px; margin: 0 0 4px; color: #0f172a; }
+  p { color: #64748b; font-size: 13px; margin: 0 0 20px; line-height: 1.5; }
+  label { display: block; font-size: 12px; font-weight: 600; color: #334155; margin-bottom: 6px; }
+  input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; margin-bottom: 14px; }
+  button { width: 100%; padding: 12px; background: #6366f1; color: #fff; border: 0; border-radius: 10px; font-weight: 600; font-size: 14px; cursor: pointer; }
+  button:hover { background: #4f46e5; }
+  a.skip { display: block; text-align: center; margin-top: 14px; color: #64748b; font-size: 13px; text-decoration: none; }
+  a.skip:hover { text-decoration: underline; }
+  .error { color: #dc2626; font-size: 13px; margin: -10px 0 14px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Create a password</h1>
+    <p>You're signed in via Atlassian. Set a password so next time you can sign in with just your email — no redirect needed.</p>
+    {{ERROR}}
+    <form method="POST" action="/auth/set-password">
+      <label for="password">New password (8+ characters)</label>
+      <input type="password" id="password" name="password" minlength="8" required autofocus />
+      <button type="submit">Save password</button>
+    </form>
+    <a class="skip" href="/">Skip for now</a>
+  </div>
+</body>
+</html>`;
+
+app.get('/auth/set-password', (req, res) => {
+  const error = req.query.error === 'short'
+    ? '<p class="error">Password must be at least 8 characters.</p>'
+    : '';
+  res.type('html').send(SET_PASSWORD_PAGE_HTML.replace('{{ERROR}}', error));
+});
+
+app.post('/auth/set-password', async (req, res) => {
+  const { password } = req.body || {};
+  if (!password || password.length < 8) {
+    return res.redirect('/auth/set-password?error=short');
+  }
+  const existing = await getUserRecord(req.user.email);
+  await saveUserRecord(req.user.email, { ...existing, passwordHash: hashPassword(password) });
+  res.redirect('/');
+});
+
+app.post('/auth/login-password', async (req, res) => {
+  const { email, password } = req.body || {};
+  const user = await getUserRecord((email || '').toLowerCase());
+  if (!user || !verifyPassword(password, user.passwordHash)) {
+    return res.redirect('/login?error=badcreds');
+  }
+  const sessionId = await createSession({
+    accountId: user.accountId,
+    email: user.email,
+    name: user.name
+  });
+  setCookie(res, 'bandanout_session', sessionId, { maxAgeSeconds: SESSION_TTL_SECONDS });
+  res.redirect('/');
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
