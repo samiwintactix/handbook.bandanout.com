@@ -386,7 +386,6 @@ h3 { margin-bottom: 0; font: 700 1rem/1.35 "Manrope", sans-serif; letter-spacing
           <div>
             <strong id="currentUserName">Signed in</strong>
             <span id="currentUserEmail"></span>
-            <a class="signout-btn" href="/auth/set-password">Change password</a>
             <button class="signout-btn" id="signOutButton" aria-label="Sign out">Sign out</button>
           </div>
         </div>
@@ -915,7 +914,7 @@ $("#peopleSearch").addEventListener("input", renderPeople);
 $("#expectationsSearch").addEventListener("input", renderExpectations);
 $("#activitySearch").addEventListener("input", renderActivity);
 $("#exportButton").addEventListener("click", exportCsv);
-$("#settingsButton").addEventListener("click", () => showToast("Integration settings would live here"));
+$("#settingsButton").addEventListener("click", () => { window.location.href = "/auth/set-password"; });
 $("#signOutButton").addEventListener("click", () => { window.location.href = "/auth/logout"; });
 $("#filterButton").addEventListener("click", () => showToast("Showing current team members only"));
 
