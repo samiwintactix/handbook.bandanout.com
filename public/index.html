@@ -225,8 +225,9 @@ h3 { margin-bottom: 0; font: 700 1rem/1.35 "Manrope", sans-serif; letter-spacing
 .expectation-count strong { display: block; font: 800 1.18rem/1 "Manrope", sans-serif; }
 .expectation-count span { color: #8a919f; font-size: .65rem; }
 .expectation-footer { margin-top: 11px; padding-left: 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.source-chip, .status-chip { height: 25px; padding: 0 8px; display: inline-flex; align-items: center; gap: 5px; border-radius: 6px; font-size: .67rem; font-weight: 700; }
-.source-chip svg { width: 13px; height: 13px; }
+.source-chip, .status-chip { height: 25px; padding: 0 8px; display: inline-flex; align-items: center; gap: 5px; border-radius: 6px; font-size: .67rem; font-weight: 700; max-width: 100%; }
+.source-chip svg { width: 13px; height: 13px; flex: none; }
+.source-chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .source-chip.jira { color: #2255a4; background: var(--blue-soft); }
 .source-chip.slack { color: #6b3b69; background: #f6ebf5; }
 .source-chip.manual { color: #566071; background: #eff1f4; }
@@ -788,7 +789,7 @@ function renderActivity() {
       ${avatar(person)}
       <div class="activity-main"><strong>${escapeHtml(person.name)} was tagged</strong><p>${escapeHtml(signal.note || "No additional context")}</p></div>
       <div class="activity-expectation">${escapeHtml(expectation.short)}</div>
-      <span class="source-chip ${signal.source}"><svg><use href="#icon-${sourceIcon(signal.source)}"></use></svg>${sourceName(signal.source)} · ${escapeHtml(signal.reference)}</span>
+      <span class="source-chip ${signal.source}" title="${escapeHtml(signal.reference)}"><svg><use href="#icon-${sourceIcon(signal.source)}"></use></svg><span class="source-chip-text">${sourceName(signal.source)} · ${escapeHtml(signal.reference)}</span></span>
       <div class="activity-date">${formatDate(signal.date, true)}<br>by ${escapeHtml(signal.by)}</div>
       <svg class="chevron"><use href="#icon-chevron"></use></svg>
     </div>`;
