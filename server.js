@@ -495,13 +495,30 @@ const LOGIN_PAGE_HTML = `<!doctype html>
   p { color: #64748b; font-size: 14px; margin: 0 0 24px; }
   a.btn, button.btn { display: block; width: 100%; box-sizing: border-box; padding: 12px 16px; background: #6366f1; color: #fff; border: 0; border-radius: 10px; text-decoration: none; font-weight: 600; font-size: 14px; cursor: pointer; }
   a.btn:hover, button.btn:hover { background: #4f46e5; }
+  a.btn.secondary { background: #fff; color: #334155; border: 1px solid #e2e8f0; }
+  a.btn.secondary:hover { background: #f8fafc; }
   .error { color: #dc2626; font-size: 13px; margin: -12px 0 20px; }
   .divider { display: flex; align-items: center; gap: 10px; margin: 22px 0; color: #94a3b8; font-size: 12px; }
   .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: #e2e8f0; }
   form { text-align: left; }
   label { display: block; font-size: 12px; font-weight: 600; color: #334155; margin-bottom: 6px; }
   input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; margin-bottom: 14px; }
+  .pw-wrap { position: relative; }
+  .pw-wrap input { padding-right: 38px; }
+  .pw-toggle { position: absolute; right: 8px; top: 8px; border: 0; background: transparent; color: #94a3b8; cursor: pointer; padding: 4px; }
+  .pw-toggle:hover { color: #475569; }
 </style>
+<script>
+  function togglePw(id, btn) {
+    var input = document.getElementById(id);
+    var showing = input.type === "text";
+    input.type = showing ? "password" : "text";
+    btn.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+    btn.innerHTML = showing
+      ? '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>'
+      : '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a20.6 20.6 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 8 11 8a20.6 20.6 0 0 1-3.22 4.4M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>';
+  }
+</script>
 </head>
 <body>
   <div class="card">
@@ -509,15 +526,18 @@ const LOGIN_PAGE_HTML = `<!doctype html>
     <h1>Bandanaut</h1>
     <p>Sign in with your Atlassian account to view expectation signals.</p>
     {{ERROR}}
-    <a class="btn" href="/auth/login">Sign in with Atlassian</a>
-    <div class="divider">or</div>
     <form method="POST" action="/auth/login-password">
       <label for="email">Email</label>
       <input type="email" id="email" name="email" required autocomplete="username" />
       <label for="password">Password</label>
-      <input type="password" id="password" name="password" required autocomplete="current-password" />
+      <div class="pw-wrap">
+        <input type="password" id="password" name="password" required autocomplete="current-password" />
+        <button type="button" class="pw-toggle" aria-label="Show password" onclick="togglePw('password', this)"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      </div>
       <button class="btn" type="submit">Sign in with password</button>
     </form>
+    <div class="divider">or</div>
+    <a class="btn secondary" href="/auth/login">Sign in with Atlassian</a>
   </div>
 </body>
 </html>`;
@@ -625,28 +645,54 @@ const SET_PASSWORD_PAGE_HTML = `<!doctype html>
   a.skip { display: block; text-align: center; margin-top: 14px; color: #64748b; font-size: 13px; text-decoration: none; }
   a.skip:hover { text-decoration: underline; }
   .error { color: #dc2626; font-size: 13px; margin: -10px 0 14px; }
+  .pw-wrap { position: relative; }
+  .pw-wrap input { padding-right: 38px; }
+  .pw-toggle { position: absolute; right: 8px; top: 8px; border: 0; background: transparent; color: #94a3b8; cursor: pointer; padding: 4px; }
+  .pw-toggle:hover { color: #475569; }
 </style>
+<script>
+  function togglePw(id, btn) {
+    var input = document.getElementById(id);
+    var showing = input.type === "text";
+    input.type = showing ? "password" : "text";
+    btn.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+    btn.innerHTML = showing
+      ? '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>'
+      : '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a20.6 20.6 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 8 11 8a20.6 20.6 0 0 1-3.22 4.4M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>';
+  }
+</script>
 </head>
 <body>
   <div class="card">
-    <h1>Create a password</h1>
-    <p>You're signed in via Atlassian. Set a password so next time you can sign in with just your email — no redirect needed.</p>
+    <h1>{{TITLE}}</h1>
+    <p>{{DESCRIPTION}}</p>
     {{ERROR}}
     <form method="POST" action="/auth/set-password">
       <label for="password">New password (8+ characters)</label>
-      <input type="password" id="password" name="password" minlength="8" required autofocus />
+      <div class="pw-wrap">
+        <input type="password" id="password" name="password" minlength="8" required autofocus />
+        <button type="button" class="pw-toggle" aria-label="Show password" onclick="togglePw('password', this)"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      </div>
       <button type="submit">Save password</button>
     </form>
-    <a class="skip" href="/">Skip for now</a>
+    <a class="skip" href="/">{{SKIP_LABEL}}</a>
   </div>
 </body>
 </html>`;
 
-app.get('/auth/set-password', (req, res) => {
+app.get('/auth/set-password', async (req, res) => {
   const error = req.query.error === 'short'
     ? '<p class="error">Password must be at least 8 characters.</p>'
     : '';
-  res.type('html').send(SET_PASSWORD_PAGE_HTML.replace('{{ERROR}}', error));
+  const existing = await getUserRecord(req.user.email);
+  const hasPassword = !!existing?.passwordHash;
+  res.type('html').send(SET_PASSWORD_PAGE_HTML
+    .replace('{{ERROR}}', error)
+    .replaceAll('{{TITLE}}', hasPassword ? 'Change your password' : 'Create a password')
+    .replace('{{DESCRIPTION}}', hasPassword
+      ? 'Set a new dashboard password.'
+      : "You're signed in via Atlassian. Set a password so next time you can sign in with just your email — no redirect needed.")
+    .replace('{{SKIP_LABEL}}', hasPassword ? 'Cancel' : 'Skip for now'));
 });
 
 app.post('/auth/set-password', async (req, res) => {
