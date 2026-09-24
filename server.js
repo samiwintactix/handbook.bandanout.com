@@ -505,7 +505,7 @@ const LOGIN_PAGE_HTML = `<!doctype html>
   input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; margin-bottom: 14px; }
   .pw-wrap { position: relative; }
   .pw-wrap input { padding-right: 38px; }
-  .pw-toggle { position: absolute; right: 8px; top: 8px; border: 0; background: transparent; color: #94a3b8; cursor: pointer; padding: 4px; }
+  button.pw-toggle { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: auto; height: auto; margin: 0; border: 0; background: transparent; color: #94a3b8; cursor: pointer; padding: 4px; line-height: 0; }
   .pw-toggle:hover { color: #475569; }
 </style>
 <script>
@@ -647,7 +647,7 @@ const SET_PASSWORD_PAGE_HTML = `<!doctype html>
   .error { color: #dc2626; font-size: 13px; margin: -10px 0 14px; }
   .pw-wrap { position: relative; }
   .pw-wrap input { padding-right: 38px; }
-  .pw-toggle { position: absolute; right: 8px; top: 8px; border: 0; background: transparent; color: #94a3b8; cursor: pointer; padding: 4px; }
+  button.pw-toggle { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: auto; height: auto; margin: 0; border: 0; background: transparent; color: #94a3b8; cursor: pointer; padding: 4px; line-height: 0; }
   .pw-toggle:hover { color: #475569; }
 </style>
 <script>
